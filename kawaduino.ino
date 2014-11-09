@@ -82,9 +82,7 @@ Time (ms)	Sequence
 
 */
 
-#include <SD.h>
 #include <Wire.h> // I2C used for RTC and LCD
-#include <LiquidCrystal_I2C.h>
 
 #define K_OUT 1 // K Output Line - TX on Arduino
 #define K_IN 0 // K Input Line - RX on Arduino
@@ -104,8 +102,6 @@ const uint8_t rolePin = 8;
 const uint8_t ledPins[] = {2, 3, 4, 5, 6, 7};
 const uint8_t ledCnt = (uint8_t)(sizeof(ledPins));
 
-LiquidCrystal_I2C lcd(0x27, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);
-
 const uint8_t ECUaddr = 0x11;
 const uint8_t myAddr = 0xF2;
 
@@ -119,14 +115,11 @@ const uint8_t numValidRegs = (uint8_t)(sizeof(validRegs));
 
 
 bool ECUconnected = false;
-bool SDCardPresent = false;
 
 
 void setup()
 {
 	char rBuf[32] = "";
-
-	lcd.begin(20, 4);
 
 	pinMode(K_OUT, OUTPUT);
 	pinMode(K_IN, INPUT);
@@ -135,13 +128,7 @@ void setup()
 		pinMode(ledPins[x], OUTPUT);
 	}
 
-	lcd.setCursor(0, 0);
-	lcd.print("Starting...");
-
-	SDCardPresent = SD.begin(10);
-
 	cycleLeds();
-	
 }
 
 void loop()
@@ -159,11 +146,7 @@ void loop()
 		ECUconnected = initPulse();
 
 		if (ECUconnected) {
-			lcd.setCursor(0, 0);
-			lcd.print("==== Connected.     ");
 		} else {
-			lcd.setCursor(0, 0);
-			lcd.print("=XX= Not Connected. ");
 		}
 	}
 	// Endless loop.
@@ -183,44 +166,40 @@ void loop()
 		// 0x?? - error code (0x10 = General Reject: The service is rejected
 		//			but the server does not specify the reason of the rejection
 
-		if (SDCardPresent) {
-			dataFile = SD.open("KDS_log.txt", FILE_WRITE);
-		}
-
 		for (uint8_t i = 0; i < 4; i++) respBuf[i] = 0;
 		// Request Coolant Temp is register: 0x06
 		
 		// This bit isn't working - seems to be printing a 2 byte response
 		// when the type is only 1 byte - and the formula doesn't work.
 		
-		cmdBuf[1] = 0x06;
-		respSize = sendRequest(cmdBuf, respBuf, cmdSize, 12);
-		if (respSize == 3) {
-			ect = (respBuf[2] - 48) / 1.6;
-			//              "                    "
-			sprintf(strBuf, "TEMPC:  %3d    [%02hhX]", ect, respBuf[2]);
-			lcd.setCursor(0,2);
-			lcd.print(strBuf);
-			if (SDCardPresent) {
-				dataFile.println(strBuf);
-			}
-		}
-		delay(ISORequestDelay);
+		//cmdBuf[1] = 0x06;
+		//respSize = sendRequest(cmdBuf, respBuf, cmdSize, 12);
+		//if (respSize == 3) {
+		//	ect = (respBuf[2] - 48) / 1.6;
+		//	//              "                    "
+		//	sprintf(strBuf, "TEMPC:  %3d    [%02hhX]", ect, respBuf[2]);
+		//	lcd.setCursor(0,2);
+		//	lcd.print(strBuf);
+		//	if (SDCardPresent) {
+		//		dataFile.println(strBuf);
+		//	}
+		//}
+		//delay(ISORequestDelay);
 				
-		for (uint8_t i = 0; i < 4; i++) respBuf[i] = 0;
-		// Request GEAR is register: 0x0B
-		cmdBuf[1] = 0x0B;
-		respSize = sendRequest(cmdBuf, respBuf, cmdSize, 12);
-		if (respSize == 3) {
-			//              "                    "
-			sprintf(strBuf, "GEAR#:   %02hhX    [%02hhX]", respBuf[2], respBuf[2]);
-			lcd.setCursor(0, 1);
-			lcd.print(strBuf);
-			if (SDCardPresent) {
-				dataFile.println(strBuf);
-			}
-		}
-		delay(ISORequestDelay);
+		//for (uint8_t i = 0; i < 4; i++) respBuf[i] = 0;
+		//// Request GEAR is register: 0x0B
+		//cmdBuf[1] = 0x0B;
+		//respSize = sendRequest(cmdBuf, respBuf, cmdSize, 12);
+		//if (respSize == 3) {
+		//	//              "                    "
+		//	sprintf(strBuf, "GEAR#:   %02hhX    [%02hhX]", respBuf[2], respBuf[2]);
+		//	lcd.setCursor(0, 1);
+		//	lcd.print(strBuf);
+		//	if (SDCardPresent) {
+		//		dataFile.println(strBuf);
+		//	}
+		//}
+		//delay(ISORequestDelay);
 
 		for (uint8_t i = 0; i < 5; i++) respBuf[i] = 0;
 		// Request RPM is register: 0x09
@@ -251,11 +230,6 @@ void loop()
 			}
 		}
 		delay(ISORequestDelay);
-
-		// Close the SD Card file
-		if (SDCardPresent) {
-			dataFile.close();
-		}
 	}
 	delay(10000);
 }
