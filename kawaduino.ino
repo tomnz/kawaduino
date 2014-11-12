@@ -82,12 +82,16 @@ Time (ms)	Sequence
 
 */
 
-#include <Wire.h> // I2C used for RTC and LCD
+#include <Adafruit_NeoPixel.h>
 
 #define K_OUT 1 // K Output Line - TX on Arduino
 #define K_IN 0 // K Input Line - RX on Arduino
 
 #define MAXSENDTIME 5000 // 5 second timeout on KDS comms.
+
+// LED settings
+#define N_PIXELS 60
+#define LED_PIN 6
 
 const uint32_t ISORequestByteDelay = 10;
 const uint32_t ISORequestDelay = 30; // Time between requests.
@@ -98,9 +102,6 @@ const bool reqAllReg = false;
 
 // Connect rolePin to Ground for slave unit (connected to KDS port).
 const uint8_t rolePin = 8;
-
-const uint8_t ledPins[] = {2, 3, 4, 5, 6, 7};
-const uint8_t ledCnt = (uint8_t)(sizeof(ledPins));
 
 const uint8_t ECUaddr = 0x11;
 const uint8_t myAddr = 0xF2;
@@ -114,6 +115,10 @@ const uint8_t validRegs[] = { 0x00, 0x01, 0x02, 0x04, 0x05, 0x06, 0x07, 0x08,
 const uint8_t numValidRegs = (uint8_t)(sizeof(validRegs));
 
 
+Adafruit_NeoPixel
+	strip = Adafruit_NeoPixel(N_PIXELS, LED_PIN, NEO_GRB + NEO_KHZ800);
+
+
 bool ECUconnected = false;
 
 
@@ -123,35 +128,56 @@ void setup()
 
 	pinMode(K_OUT, OUTPUT);
 	pinMode(K_IN, INPUT);
-	
-	for (uint8_t x = 0; x < ledCnt; x++) {
-		pinMode(ledPins[x], OUTPUT);
-	}
 
-	cycleLeds();
+        analogWrite(13, LOW);
+
+	strip.begin();
+
+        for (uint8_t i = 0; i < N_PIXELS; i++) {
+          strip.setPixelColor(i, 255, 255, 255);
+        }
+        
+        strip.show();
+        
+        delay(2000);
+        
+        strip.clear();
+        strip.show();
 }
 
 void loop()
 {
+        analogWrite(13, HIGH);
+        delay(200);
+        analogWrite(13, LOW);
+        delay(200);
+        analogWrite(13, HIGH);
+        delay(200);
+        analogWrite(13, LOW);
+        
 	char strBuf[21];
 	uint8_t cmdSize;
 	uint8_t cmdBuf[6];
 	uint8_t respSize;
 	uint8_t respBuf[12];
 	uint8_t ect;
-	File dataFile;
 
 	if (!ECUconnected) {
 		// Start KDS comms
 		ECUconnected = initPulse();
 
 		if (ECUconnected) {
+                  analogWrite(13, HIGH);
 		} else {
+                  analogWrite(13, LOW);
 		}
 	}
 	// Endless loop.
 
 	while (ECUconnected) {
+  
+  		strip.clear();
+  
 		// Send register requests
 		cmdSize = 2; // each request is a 2 byte packet.
 		cmdBuf[0] = 0x21; // Register request cmd
@@ -208,11 +234,18 @@ void loop()
 		if (respSize == 4) {
 			//              "                    "
 			sprintf(strBuf, "RPM's: %4d [%02hhX|%02hhX]", respBuf[2] * 100 + respBuf[3], respBuf[2], respBuf[3]);
-			lcd.setCursor(0, 3);
-			lcd.print(strBuf);
-			if (SDCardPresent) {
-				dataFile.println(strBuf);
-			}
+                        int rpms = respBuf[2] * 100 + respBuf[3];
+                        rpms = max(min(rpms, 10000), 0);
+                        if (rpms > 200) {
+                          //analogWrite(13, HIGH);
+                        }
+                        else {
+                          //analogWrite(13, LOW);
+                        }
+                        int leds = (rpms * N_PIXELS) / 10000;
+                        for (uint8_t k = 0; k < leds; k++) {
+                          strip.setPixelColor(k, 255, 255, 255);
+                        }
 		}
 		delay(ISORequestDelay);
 
@@ -223,41 +256,12 @@ void loop()
 		if (respSize == 4) {
 			//              "                    "
 			sprintf(strBuf, "SPEED:  %3d [%02hhX|%02hhX]", ((respBuf[2] << 8) + respBuf[3]) / 2, respBuf[2], respBuf[3]);
-			lcd.setCursor(0, 3);
-			lcd.print(strBuf);
-			if (SDCardPresent) {
-				dataFile.println(strBuf);
-			}
 		}
 		delay(ISORequestDelay);
-	}
-	delay(10000);
-}
 
-void cycleLeds() {
-	int16_t ledDelay = 80;
-	
-	digitalWrite(ledPins[0], HIGH);
-	for (int8_t i = 1; i < ledCnt; i++) {
-		delay(ledDelay);
-		digitalWrite(ledPins[i], HIGH);
-		if (i > 0) digitalWrite(ledPins[i - 1], LOW);
+		strip.show();
 	}
-	for (int8_t i = ledCnt - 2; i >= 0; i--) {
-		delay(ledDelay);
-		digitalWrite(ledPins[i], HIGH);
-		digitalWrite(ledPins[i + 1], LOW);
-	}
-	ledDelay = ledDelay - 20;
-	delay(ledDelay + 30);
-	digitalWrite(ledPins[0], LOW);
-	for (int8_t i = 0; i < ledCnt; i++) {
-		digitalWrite(ledPins[i], HIGH);
-	}
-	delay(300);
-	for (int8_t i = 0; i < ledCnt; i++) {
-		digitalWrite(ledPins[i], LOW);
-	}
+	delay(5000);
 }
 
 
