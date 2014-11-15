@@ -86,15 +86,22 @@ Time (ms)	Sequence
 
 #define K_OUT 1 // K Output Line - TX on Arduino
 #define K_IN 0 // K Input Line - RX on Arduino
+#define SERIAL_ON 3
 
 #define MAXSENDTIME 5000 // 5 second timeout on KDS comms.
+
+// Animation settings
+#define MAX_RPM 10000
 
 // LED settings
 #define N_PIXELS 60
 #define LED_PIN 6
+#define GREEN_LED 5
+#define RED_LED 4
+#define BOARD_LED 13
 
 const uint32_t ISORequestByteDelay = 10;
-const uint32_t ISORequestDelay = 30; // Time between requests.
+const uint32_t ISORequestDelay = 20; // Time between requests.
 
 const bool debugKDS = true;
 const bool debugPkt = true;
@@ -120,7 +127,7 @@ Adafruit_NeoPixel
 
 
 bool ECUconnected = false;
-
+uint32_t rpms = 0;
 
 void setup()
 {
@@ -128,8 +135,12 @@ void setup()
 
 	pinMode(K_OUT, OUTPUT);
 	pinMode(K_IN, INPUT);
+        pinMode(SERIAL_ON, OUTPUT);
+        pinMode(BOARD_LED, OUTPUT);
+        pinMode(RED_LED, OUTPUT);
+        pinMode(GREEN_LED, OUTPUT);
 
-        analogWrite(13, LOW);
+        digitalWrite(BOARD_LED, LOW);
 
 	strip.begin();
 
@@ -147,13 +158,14 @@ void setup()
 
 void loop()
 {
-        analogWrite(13, HIGH);
-        delay(200);
-        analogWrite(13, LOW);
-        delay(200);
-        analogWrite(13, HIGH);
-        delay(200);
-        analogWrite(13, LOW);
+        digitalWrite(SERIAL_ON, HIGH);
+        digitalWrite(BOARD_LED, HIGH);
+        delay(300);
+        digitalWrite(BOARD_LED, LOW);
+        delay(300);
+        digitalWrite(BOARD_LED, HIGH);
+        delay(300);
+        digitalWrite(BOARD_LED, LOW);
         
 	char strBuf[21];
 	uint8_t cmdSize;
@@ -167,13 +179,14 @@ void loop()
 		ECUconnected = initPulse();
 
 		if (ECUconnected) {
-                  analogWrite(13, HIGH);
+                  digitalWrite(BOARD_LED, HIGH);
 		} else {
-                  analogWrite(13, LOW);
+                  digitalWrite(BOARD_LED, LOW);
+                  digitalWrite(SERIAL_ON, LOW);
 		}
 	}
 	// Endless loop.
-
+        boolean redOn = true;
 	while (ECUconnected) {
   
   		strip.clear();
@@ -234,34 +247,48 @@ void loop()
 		if (respSize == 4) {
 			//              "                    "
 			sprintf(strBuf, "RPM's: %4d [%02hhX|%02hhX]", respBuf[2] * 100 + respBuf[3], respBuf[2], respBuf[3]);
-                        int rpms = respBuf[2] * 100 + respBuf[3];
-                        rpms = max(min(rpms, 10000), 0);
-                        if (rpms > 200) {
-                          //analogWrite(13, HIGH);
+                        rpms = respBuf[2] * 100 + respBuf[3];
+                        rpms = max(min(rpms, MAX_RPM), 0);
+                        if (rpms > 2000) {
+                          digitalWrite(GREEN_LED, HIGH);
                         }
                         else {
-                          //analogWrite(13, LOW);
+                          digitalWrite(GREEN_LED, LOW);
                         }
-                        int leds = (rpms * N_PIXELS) / 10000;
-                        for (uint8_t k = 0; k < leds; k++) {
-                          strip.setPixelColor(k, 255, 255, 255);
+                        if (redOn) {
+                          digitalWrite(RED_LED, HIGH);
                         }
+                        else {
+                          digitalWrite(RED_LED, LOW);
+                        }
+                        redOn = !redOn;
+
 		}
 		delay(ISORequestDelay);
 
-		for (uint8_t i = 0; i < 5; i++) respBuf[i] = 0;
+		//for (uint8_t i = 0; i < 5; i++) respBuf[i] = 0;
 		// Request Speed is register: 0x0C
-		cmdBuf[1] = 0x0C;
-		respSize = sendRequest(cmdBuf, respBuf, cmdSize, 12);
-		if (respSize == 4) {
-			//              "                    "
-			sprintf(strBuf, "SPEED:  %3d [%02hhX|%02hhX]", ((respBuf[2] << 8) + respBuf[3]) / 2, respBuf[2], respBuf[3]);
-		}
-		delay(ISORequestDelay);
+		//cmdBuf[1] = 0x0C;
+		//respSize = sendRequest(cmdBuf, respBuf, cmdSize, 12);
+		//if (respSize == 4) {
+		//	//              "                    "
+		//	sprintf(strBuf, "SPEED:  %3d [%02hhX|%02hhX]", ((respBuf[2] << 8) + respBuf[3]) / 2, respBuf[2], respBuf[3]);
+		//}
+		//delay(ISORequestDelay);
 
 		strip.show();
 	}
 	delay(5000);
+}
+
+
+void updateLeds() {
+  strip.clear();
+  uint8_t leds = (uint8_t)((rpms * N_PIXELS) / MAX_RPM);
+  for (uint8_t k = 0; k < leds; k++) {
+    strip.setPixelColor(k, 255, 255, 255);
+  }
+  strip.show();
 }
 
 
@@ -449,6 +476,7 @@ uint8_t sendRequest(const uint8_t *request, uint8_t *response, uint8_t reqLen, u
 	return false;
 
 }
+
 
 // Checksum is simply the sum of all data bytes modulo 0xFF
 // (same as being truncated to one byte)
