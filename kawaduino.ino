@@ -184,7 +184,7 @@ void loop() {
 
     if (ECUconnected) {
       // Start update interrupt
-      Timer1.attachInterrupt(updateLeds, REFRESH_MICROS);
+      enable_interrupts();
       // Show we're connected
       digitalWrite(BOARD_LED, HIGH);
     } else {
@@ -289,7 +289,7 @@ void loop() {
   strip.clear();
   strip.show();
 
-  Timer1.detachInterrupt();
+  disable_interrupts();
   delay(5000);
 }
 
@@ -403,12 +403,14 @@ uint8_t sendRequest(const uint8_t *request, uint8_t *response, uint8_t reqLen, u
   }
   
   // Now send the command...
+  disable_interrupts();
   serial_rx_off();
   for (uint8_t i = 0; i < bytesToSend; i++) {
     bytesSent += Serial.write(buf[i]);
     delay(ISORequestByteDelay);
   }
   serial_rx_on();
+  enable_interrupts();
   
   // Wait required time for response.
   delay(ISORequestDelay);
@@ -416,6 +418,7 @@ uint8_t sendRequest(const uint8_t *request, uint8_t *response, uint8_t reqLen, u
   startTime = millis();
   
   // Wait for and deal with the reply
+  disable_interrupts();
   while ((bytesRcvd <= maxLen) && ((millis() - startTime) < MAXSENDTIME)) {
     if (Serial.available()) {
       c = Serial.read();
@@ -469,6 +472,7 @@ uint8_t sendRequest(const uint8_t *request, uint8_t *response, uint8_t reqLen, u
             // Only check the checksum if it was for us - don't care otherwise!
             if (calcChecksum(rbuf, rCnt) == rbuf[rCnt]) {
               // Checksum OK.
+              enable_interrupts();
               return(bytesRcvd);
             } else {
               // Checksum Error.
@@ -540,4 +544,12 @@ void serial_rx_off() {
 void serial_tx_off() {
   //UCSR0B &= ~(_BV(TXEN0));  //disable UART TX
   //delay(20);                 //allow time for buffers to flush
+}
+
+void enable_interrupts() {
+  Timer1.attachInterrupt(updateLeds, REFRESH_MICROS);
+}
+
+void disable_interrupts() {
+  Timer1.detachInterrupt();
 }
