@@ -212,28 +212,7 @@ void loop() {
   // Endless loop.
   boolean diag1On = true;
   while (ECUconnected) {
-#ifdef BTN_PIN
-    // Check the button
-    if (digitalRead(BTN_PIN) == HIGH) {
-      if (!btnPressed) {
-        // This is the first time we're seeing the press
-        btnPressed = true;
-        
-        // Increment the mode
-        mode++;
-        if (mode > N_MODES) {
-          mode = 1;
-        }
-        
-        // Save it
-        EEPROM.write(MODE_ADDR, mode);
-        
-        // Calculate the average again
-        determineAverage();
-      }
-    } else {
-    }
-#endif
+    doButton();
     
     // Send register requests
     cmdSize = 2; // each request is a 2 byte packet.
@@ -299,10 +278,10 @@ boolean diag2On = false;
 // One-time function to measure average runtime of
 // updateLeds() - called at startup
 void determineAverage() {
-  unsigned long start = micros();
   boolean oldECUconnected = ECUconnected;
   uint32_t oldRpms = rpms;
   ECUconnected = true;
+  unsigned long start = micros();
   
   for (int i = 0; i < AVG_CYCLES; i++) {
     // Use a new RPM each time to make sure the function
@@ -316,6 +295,36 @@ void determineAverage() {
   rpms = oldRpms;
   dampedRpms = oldRpms;
   ECUconnected = oldECUconnected;
+}
+
+
+boolean doButton() {
+#ifdef BTN_PIN
+  // Check the button
+  if (digitalRead(BTN_PIN) == HIGH) {
+    if (!btnPressed) {
+      // This is the first time we're seeing the press
+      btnPressed = true;
+      
+      // Increment the mode
+      mode++;
+      if (mode > N_MODES) {
+        mode = 1;
+      }
+      
+      // Save it
+      EEPROM.write(MODE_ADDR, mode);
+      
+      // Calculate the average again
+      determineAverage();
+      
+      return true;
+    }
+  } else {
+    btnPressed = false;
+  }
+#endif
+  return false;
 }
 
 
@@ -333,14 +342,17 @@ void delayLeds(unsigned long ms) {
     // Note that this conservatively will NOT run updateLeds if it doesn't look
     // like there will be enough time to complete
     if (curr - lastUpdate > REFRESH_MICROS && ((curr - first) + avg*4 < ms * 1000)) {
+      boolean changed = doButton();
       updateLeds();
       
       last = micros();
       lastUpdate = last;
-      if (avg == 0) {
-        avg = last - curr;
-      } else {
-        avg = (avg * 15 + (last - curr)) >> 4;
+      if (!changed) {
+        if (avg == 0) {
+          avg = last - curr;
+        } else {
+          avg = (avg * 15 + (last - curr)) >> 4;
+        }
       }
     } else {
       last = curr;
