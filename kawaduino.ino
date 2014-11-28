@@ -82,25 +82,31 @@ Time (ms)	Sequence
 
 */
 
-#include <TimerOne.h>
 #include <Adafruit_NeoPixel.h>
 
 #define K_OUT 1 // K Output Line - TX on Arduino
 #define K_IN 0 // K Input Line - RX on Arduino
 #define SERIAL_ON 3
 
-#define MAXSENDTIME 5000 // 5 second timeout on KDS comms.
+#define MAXSENDTIME 2000 // 2 second timeout on KDS comms.
 
 // Animation settings
-#define MAX_RPM 10000
+#define MAX_RPM 6000
 #define REFRESH_MICROS 30000
+#define MIN_COL 60
+#define MAX_COL 255
+#define MIN_BRIGHT 30
+#define MAX_BRIGHT 255
 
 // LED settings
 #define N_PIXELS 60
 #define LED_PIN 6
-#define GREEN_LED 5
-#define RED_LED 4
+#define DIAG_LED2 5
+#define DIAG_LED1 4
 #define BOARD_LED 13
+
+// Misc
+#define AVG_CYCLES 50
 
 const uint32_t ISORequestByteDelay = 10;
 const uint32_t ISORequestDelay = 40; // Time between requests.
@@ -138,36 +144,34 @@ void setup() {
   // Setup pins
   pinMode(K_OUT, OUTPUT);
   pinMode(K_IN, INPUT);
+#ifdef SERIAL_ON
   pinMode(SERIAL_ON, OUTPUT);
-  pinMode(RED_LED, OUTPUT);
-  pinMode(GREEN_LED, OUTPUT);
+#endif
+#ifdef DIAG_LED1
+  pinMode(DIAG_LED1, OUTPUT);
+#endif
+#ifdef DIAG_LED2
+  pinMode(DIAG_LED2, OUTPUT);
+#endif
   pinMode(BOARD_LED, OUTPUT);
   digitalWrite(BOARD_LED, LOW);
 
   // Show startup routine
   strip.begin();
 
-  for (uint8_t i = 0; i < N_PIXELS; i++) {
-    strip.setPixelColor(i, Wheel(i * 255 / N_PIXELS));
-    strip.show();
-    delay(2000 / N_PIXELS);
-  }
-        
-  strip.clear();
-  strip.show();
+  startupLeds();
   
   determineAverage();
   
   strip.clear();
   strip.show();
-  
-  // Init timer
-  //Timer1.initialize(REFRESH_MICROS);
 }
 
 void loop() {
   // Init blink
+#ifdef SERIAL_ON
   digitalWrite(SERIAL_ON, HIGH);
+#endif
   digitalWrite(BOARD_LED, HIGH);
   delay(200);
   digitalWrite(BOARD_LED, LOW);
@@ -188,8 +192,6 @@ void loop() {
     ECUconnected = initPulse();
 
     if (ECUconnected) {
-      // Start update interrupt
-      enable_interrupts();
       // Show we're connected
       digitalWrite(BOARD_LED, HIGH);
     } else {
@@ -197,7 +199,7 @@ void loop() {
   }
   
   // Endless loop.
-  boolean redOn = true;
+  boolean diag1On = true;
   while (ECUconnected) {
   
     // Send register requests
@@ -214,41 +216,6 @@ void loop() {
     // 0x?? - error code (0x10 = General Reject: The service is rejected
     //      but the server does not specify the reason of the rejection
 
-    for (uint8_t i = 0; i < 4; i++) respBuf[i] = 0;
-    // Request Coolant Temp is register: 0x06
-    
-    // This bit isn't working - seems to be printing a 2 byte response
-    // when the type is only 1 byte - and the formula doesn't work.
-    
-    //cmdBuf[1] = 0x06;
-    //respSize = sendRequest(cmdBuf, respBuf, cmdSize, 12);
-    //if (respSize == 3) {
-    //  ect = (respBuf[2] - 48) / 1.6;
-    //  //              "                    "
-    //  sprintf(strBuf, "TEMPC:  %3d    [%02hhX]", ect, respBuf[2]);
-    //  lcd.setCursor(0,2);
-    //  lcd.print(strBuf);
-    //  if (SDCardPresent) {
-    //    dataFile.println(strBuf);
-    //  }
-    //}
-    //delay(ISORequestDelay);
-        
-    //for (uint8_t i = 0; i < 4; i++) respBuf[i] = 0;
-    //// Request GEAR is register: 0x0B
-    //cmdBuf[1] = 0x0B;
-    //respSize = sendRequest(cmdBuf, respBuf, cmdSize, 12);
-    //if (respSize == 3) {
-    //  //              "                    "
-    //  sprintf(strBuf, "GEAR#:   %02hhX    [%02hhX]", respBuf[2], respBuf[2]);
-    //  lcd.setCursor(0, 1);
-    //  lcd.print(strBuf);
-    //  if (SDCardPresent) {
-    //    dataFile.println(strBuf);
-    //  }
-    //}
-    //delay(ISORequestDelay);
-
     for (uint8_t i = 0; i < 5; i++) respBuf[i] = 0;
     // Request RPM is register: 0x09
     cmdBuf[1] = 0x09;
@@ -259,13 +226,15 @@ void loop() {
       rpms = respBuf[2] * 100 + respBuf[3];
       rpms = max(min(rpms, MAX_RPM), 0);
 
-      if (redOn) {
-        digitalWrite(RED_LED, HIGH);
+#ifdef DIAG_LED1
+      if (diag1On) {
+        digitalWrite(DIAG_LED1, HIGH);
       }
       else {
-        digitalWrite(RED_LED, LOW);
+        digitalWrite(DIAG_LED1, LOW);
       }
-      redOn = !redOn;
+      diag1On = !diag1On;
+#endif
     }
     else if (respSize == 0) {
       ECUconnected = false;
@@ -273,52 +242,56 @@ void loop() {
     }
     delayLeds(ISORequestDelay);
 
-    //for (uint8_t i = 0; i < 5; i++) respBuf[i] = 0;
-    // Request Speed is register: 0x0C
-    //cmdBuf[1] = 0x0C;
-    //respSize = sendRequest(cmdBuf, respBuf, cmdSize, 12);
-    //if (respSize == 4) {
-    //  //              "                    "
-    //  sprintf(strBuf, "SPEED:  %3d [%02hhX|%02hhX]", ((respBuf[2] << 8) + respBuf[3]) / 2, respBuf[2], respBuf[3]);
-    //}
-    //delay(ISORequestDelay);
-    
-    updateLeds();
   }
 
   // Housekeeping
-  disable_interrupts();
   digitalWrite(BOARD_LED, LOW);
+#ifdef SERIAL_ON
   digitalWrite(SERIAL_ON, LOW);
+#endif
   strip.clear();
   strip.show();
 
   delay(5000);
 }
 
-unsigned long avg = 0;
-boolean greenOn = false;
 
+unsigned long avg = 0;
+#ifdef DIAG_LED2
+boolean diag2On = false;
+#endif
+
+// One-time function to measure average runtime of
+// updateLeds() - called at startup
 void determineAverage() {
-  rpms = MAX_RPM;
-  dampedRpms = MAX_RPM;
   unsigned long start = micros();
-  for (int i = 0; i < 50; i++) {
+  for (int i = 0; i < AVG_CYCLES; i++) {
+    // Use a new RPM each time to make sure the function
+    // is working as hard as possible
+    rpms = map(i, 0, AVG_CYCLES, 0, MAX_RPM);
+    dampedRpms = rpms;
     updateLeds();
   }
-  avg = (micros() - start) / 50;
+  avg = (micros() - start) / AVG_CYCLES;
+  
   rpms = 0;
   dampedRpms = 0;
 }
 
+
+// Custom delay routine that updates LEDs while idle
 void delayLeds(unsigned long ms) {
   unsigned long last = micros();
   unsigned long lastUpdate = 0;
   unsigned long first = last;
 
+  // Run as long as we haven't exceeded given ms
   while ((last - first) < ms * 1000) {
     unsigned long curr = micros();
     
+    // Refresh the lights if we go over a given interval, and we'll have time
+    // Note that this conservatively will NOT run updateLeds if it doesn't look
+    // like there will be enough time to complete
     if (curr - lastUpdate > REFRESH_MICROS && ((curr - first) + avg*4 < ms * 1000)) {
       updateLeds();
       
@@ -327,7 +300,7 @@ void delayLeds(unsigned long ms) {
       if (avg == 0) {
         avg = last - curr;
       } else {
-        avg = (avg * 7 + (last - curr)) >> 3;
+        avg = (avg * 15 + (last - curr)) >> 4;
       }
     } else {
       last = curr;
@@ -335,15 +308,20 @@ void delayLeds(unsigned long ms) {
   }
 }
 
+
+// Show the next frame on the LEDs
 void updateLeds() {
-  if (greenOn) {
-    digitalWrite(GREEN_LED, HIGH);
+#ifdef DIAG_LED2
+  // Diagnostic blink
+  if (diag2On) {
+    digitalWrite(DIAG_LED2, HIGH);
   }
   else {
-    digitalWrite(GREEN_LED, LOW);
+    digitalWrite(DIAG_LED2, LOW);
   }
   
-  greenOn = !greenOn;
+  diag2On = !diag2On;
+#endif
   
   // Uncomment for test RPMs
   //rpms += 100;
@@ -353,12 +331,17 @@ void updateLeds() {
 
   // Update rpms
   dampedRpms = (dampedRpms * 7 + rpms) >> 3;
+  
+  // Set brightness
+  strip.setBrightness(map(dampedRpms, 0, MAX_RPM, MIN_BRIGHT, MAX_BRIGHT));
+  
+  // Grab color for RPM
+  uint32_t col = Wheel(map(dampedRpms, 0, MAX_RPM, MIN_COL, MAX_COL));
 
   // Display
   strip.clear();
-  uint8_t leds = (uint8_t)((dampedRpms * N_PIXELS) / MAX_RPM);
-  for (uint8_t k = 0; k < leds; k++) {
-    strip.setPixelColor(k, Wheel(k * 255 / N_PIXELS));
+  for (uint8_t k = 0; k < N_PIXELS; k++) {
+    strip.setPixelColor(k, col);
   }
   
   // Random pixel for visual refresh representation
@@ -368,12 +351,35 @@ void updateLeds() {
 }
 
 
+// Run startup routine on LEDs (purely cosmetic!)
+void startupLeds() {
+  strip.clear();
+  
+  // Show
+  for (uint8_t i = 0; i < N_PIXELS; i++) {
+    strip.setPixelColor(i, Wheel(i * 255 / N_PIXELS));
+    strip.show();
+    delay(1000 / N_PIXELS);
+  }
+
+  // Hide
+  for (uint8_t i = 0; i < N_PIXELS; i++) {
+    strip.setPixelColor(i, 0);
+    strip.show();
+    delay(1000 / N_PIXELS);
+  }
+        
+  strip.clear();
+  strip.show();
+}
+
+
+// Initialize connection to ECU
 bool initPulse() {
   uint8_t rLen;
   uint8_t req[2];
   uint8_t resp[3];
 
-  disable_interrupts();
   Serial.end();
   
   // This is the ISO 14230-2 "Fast Init" sequence.
@@ -408,7 +414,8 @@ bool initPulse() {
   return false;
 }
 
-// send a request to the ESC and wait for the response
+
+// Send a request to the ECU and wait for the response
 // request = buffer to send
 // response = buffer to hold the response
 // reqLen = length of request
@@ -430,6 +437,7 @@ uint8_t sendRequest(const uint8_t *request, uint8_t *response, uint8_t reqLen, u
   for (uint8_t i = 0; i < 16; i++) {
     buf[i] = 0;
   }
+  
   // Zero the response buffer up to maxLen
   for (uint8_t i = 0; i < maxLen; i++) {
     response[i] = 0;
@@ -458,17 +466,13 @@ uint8_t sendRequest(const uint8_t *request, uint8_t *response, uint8_t reqLen, u
   }
   
   // Now send the command...
-  serial_rx_off();
   for (uint8_t i = 0; i < bytesToSend; i++) {
     bytesSent += Serial.write(buf[i]);
     delay(ISORequestByteDelay);
   }
-  serial_rx_on();
   
   // Wait required time for response.
-  enable_interrupts();
   delayLeds(ISORequestDelay);
-  disable_interrupts();
   
   startTime = millis();
   
@@ -526,7 +530,6 @@ uint8_t sendRequest(const uint8_t *request, uint8_t *response, uint8_t reqLen, u
             // Only check the checksum if it was for us - don't care otherwise!
             if (calcChecksum(rbuf, rCnt) == rbuf[rCnt]) {
               // Checksum OK.
-              enable_interrupts();
               return(bytesRcvd);
             } else {
               // Checksum Error.
@@ -554,7 +557,17 @@ uint8_t sendRequest(const uint8_t *request, uint8_t *response, uint8_t reqLen, u
   }
 
   return false;
+}
 
+// Checksum is simply the sum of all data bytes modulo 0xFF
+// (same as being truncated to one byte)
+uint8_t calcChecksum(uint8_t *data, uint8_t len) {
+  uint8_t crc = 0;
+
+  for (uint8_t i = 0; i < len; i++) {
+    crc = crc + data[i];
+  }
+  return crc;
 }
 
 
@@ -574,36 +587,3 @@ uint32_t Wheel(byte WheelPos) {
 	}
 }
 
-// Checksum is simply the sum of all data bytes modulo 0xFF
-// (same as being truncated to one byte)
-uint8_t calcChecksum(uint8_t *data, uint8_t len) {
-  uint8_t crc = 0;
-
-  for (uint8_t i = 0; i < len; i++) {
-    crc = crc + data[i];
-  }
-  return crc;
-}
-
-
-void serial_rx_on() {
-  //UCSR0B |= (_BV(RXEN0));  //disable UART RX
-  //Serial.begin(10400);    //setting enable bit didn't work, so do beginSerial
-}
-
-void serial_rx_off() {
-  //UCSR0B &= ~(_BV(RXEN0));  //disable UART RX
-}
-
-void serial_tx_off() {
-  //UCSR0B &= ~(_BV(TXEN0));  //disable UART TX
-  //delay(20);                 //allow time for buffers to flush
-}
-
-void enable_interrupts() {
-  //Timer1.attachInterrupt(updateLeds, REFRESH_MICROS);
-}
-
-void disable_interrupts() {
-  //Timer1.detachInterrupt();
-}
