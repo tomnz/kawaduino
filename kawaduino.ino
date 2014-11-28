@@ -93,7 +93,7 @@ Time (ms)	Sequence
 
 // Animation settings
 #define MAX_RPM 10000
-#define REFRESH_MICROS 100000
+#define REFRESH_MICROS 10000
 
 // LED settings
 #define N_PIXELS 60
@@ -103,7 +103,7 @@ Time (ms)	Sequence
 #define BOARD_LED 13
 
 const uint32_t ISORequestByteDelay = 10;
-const uint32_t ISORequestDelay = 30; // Time between requests.
+const uint32_t ISORequestDelay = 35; // Time between requests.
 
 const bool debugKDS = true;
 const bool debugPkt = true;
@@ -253,12 +253,7 @@ void loop() {
       sprintf(strBuf, "RPM's: %4d [%02hhX|%02hhX]", respBuf[2] * 100 + respBuf[3], respBuf[2], respBuf[3]);
       rpms = respBuf[2] * 100 + respBuf[3];
       rpms = max(min(rpms, MAX_RPM), 0);
-      if (rpms > 2000) {
-        digitalWrite(GREEN_LED, HIGH);
-      }
-      else {
-        digitalWrite(GREEN_LED, LOW);
-      }
+
       if (redOn) {
         digitalWrite(RED_LED, HIGH);
       }
@@ -271,7 +266,7 @@ void loop() {
       ECUconnected = false;
       break;
     }
-    delay(ISORequestDelay);
+    delayLeds(ISORequestDelay);
 
     //for (uint8_t i = 0; i < 5; i++) respBuf[i] = 0;
     // Request Speed is register: 0x0C
@@ -294,6 +289,39 @@ void loop() {
   delay(5000);
 }
 
+
+void delayLeds(uint8_t ms) {
+  unsigned long last = micros();
+  unsigned long lastUpdate = 0;
+  unsigned long first = micros();
+  unsigned long avg = 0;
+  
+  boolean greenOn = false;
+
+  while ((last - first) < ms * 1000) {
+    unsigned long curr = micros();
+    
+    if (curr - lastUpdate > REFRESH_MICROS && ((last - first) + avg < ms * 1000) {
+      //updateLeds();
+      if (greenOn) {
+        digitalWrite(GREEN_LED, HIGH);
+      }
+      else {
+        digitalWrite(GREEN_LED, LOW);
+      }
+      
+      greenOn = !greenOn;
+      
+      last = micros();
+      lastUpdate = last;
+      if (avg == 0) {
+        avg = last - curr;
+      } else {
+        avg = (avg * 7 + (last - curr)) >> 3;
+      }
+    }
+  }
+}
 
 void updateLeds() {
   // Uncomment for test RPMs
@@ -410,14 +438,15 @@ uint8_t sendRequest(const uint8_t *request, uint8_t *response, uint8_t reqLen, u
   serial_rx_off();
   for (uint8_t i = 0; i < bytesToSend; i++) {
     bytesSent += Serial.write(buf[i]);
-    delay(ISORequestByteDelay);
+    delayLeds(ISORequestByteDelay);
   }
   serial_rx_on();
   
   // Wait required time for response.
   enable_interrupts();
-  delay(ISORequestDelay);
+  delayLeds(ISORequestDelay);
   disable_interrupts();
+  
   startTime = millis();
   
   // Wait for and deal with the reply
@@ -426,7 +455,7 @@ uint8_t sendRequest(const uint8_t *request, uint8_t *response, uint8_t reqLen, u
       c = Serial.read();
       startTime = millis(); // reset the timer on each byte received
 
-      delay(ISORequestByteDelay);
+      delayLeds(ISORequestByteDelay);
 
       rbuf[rCnt] = c;
       switch (rCnt) {
@@ -486,7 +515,7 @@ uint8_t sendRequest(const uint8_t *request, uint8_t *response, uint8_t reqLen, u
           bytesRcvd = 0;
           
           // ISO 14230 specifies a delay between ECU responses.
-          delay(ISORequestDelay);
+          delayLeds(ISORequestDelay);
         } else {
           // must be data, so put it in the response buffer
           // rCnt must be >= 4 to be here.
@@ -549,9 +578,9 @@ void serial_tx_off() {
 }
 
 void enable_interrupts() {
-  Timer1.attachInterrupt(updateLeds, REFRESH_MICROS);
+  //Timer1.attachInterrupt(updateLeds, REFRESH_MICROS);
 }
 
 void disable_interrupts() {
-  Timer1.detachInterrupt();
+  //Timer1.detachInterrupt();
 }
