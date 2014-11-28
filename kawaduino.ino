@@ -89,6 +89,7 @@ Time (ms)	Sequence
 */
 
 #include <Adafruit_NeoPixel.h>
+#include <EEPROM.h>
 
 #define K_OUT 1 // K Output Line - TX on Arduino
 #define K_IN 0 // K Input Line - RX on Arduino
@@ -108,6 +109,11 @@ Time (ms)	Sequence
 #define DIAG_LED1 4
 #define DIAG_LED2 5
 #define BOARD_LED 13
+
+// Modes
+#define N_MODES 2
+#define MODE_ADDR 0
+#define BTN_PIN 7
 
 // Startup
 #define AVG_CYCLES 50
@@ -138,6 +144,10 @@ bool ECUconnected = false;
 uint32_t rpms = 0;
 uint32_t dampedRpms = 0;
 
+// Modes
+uint8_t mode = 0;
+boolean btnPressed = false;
+
 void setup() {
   // Setup pins
   pinMode(K_OUT, OUTPUT);
@@ -158,6 +168,9 @@ void setup() {
   strip.begin();
 
   startupLeds();
+  
+  // Read mode
+  mode = EEPROM.read(MODE_ADDR);
   
   // Determine duration of updateLeds()
   determineAverage();
@@ -199,7 +212,29 @@ void loop() {
   // Endless loop.
   boolean diag1On = true;
   while (ECUconnected) {
-  
+#ifdef BTN_PIN
+    // Check the button
+    if (digitalRead(BTN_PIN) == HIGH) {
+      if (!btnPressed) {
+        // This is the first time we're seeing the press
+        btnPressed = true;
+        
+        // Increment the mode
+        mode++;
+        if (mode > N_MODES) {
+          mode = 1;
+        }
+        
+        // Save it
+        EEPROM.write(MODE_ADDR, mode);
+        
+        // Calculate the average again
+        determineAverage();
+      }
+    } else {
+    }
+#endif
+    
     // Send register requests
     cmdSize = 2; // each request is a 2 byte packet.
     cmdBuf[0] = 0x21; // Register request cmd
@@ -265,6 +300,8 @@ boolean diag2On = false;
 // updateLeds() - called at startup
 void determineAverage() {
   unsigned long start = micros();
+  boolean oldECUconnected = ECUconnected;
+  uint32_t oldRpms = rpms;
   ECUconnected = true;
   
   for (int i = 0; i < AVG_CYCLES; i++) {
@@ -276,9 +313,9 @@ void determineAverage() {
   }
   avg = (micros() - start) / AVG_CYCLES;
   
-  rpms = 0;
-  dampedRpms = 0;
-  ECUconnected = false;
+  rpms = oldRpms;
+  dampedRpms = oldRpms;
+  ECUconnected = oldECUconnected;
 }
 
 
@@ -329,7 +366,20 @@ void updateLeds() {
   
   diag2On = !diag2On;
 #endif
-  
+
+  switch(mode) {
+    case 1:
+      doMode1();
+      break;
+    case 2:
+      doMode2();
+      break;
+  }
+}
+
+
+// Show frame for mode 1
+void doMode1() {
   // Uncomment for test RPMs
   //rpms += 100;
   //if (rpms > MAX_RPM) {
@@ -354,6 +404,13 @@ void updateLeds() {
   // Random pixel for visual refresh representation
   //strip.setPixelColor(random(N_PIXELS), 255, 255, 255);
   
+  strip.show();
+}
+
+// Show frame for mode 2
+void doMode2() {
+  strip.clear();
+  strip.setPixelColor(random(N_PIXELS), 255, 255, 255);
   strip.show();
 }
 
