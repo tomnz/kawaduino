@@ -93,7 +93,7 @@ Time (ms)	Sequence
 
 // Animation settings
 #define MAX_RPM 10000
-#define REFRESH_MICROS 40000
+#define REFRESH_MICROS 100000
 
 // LED settings
 #define N_PIXELS 60
@@ -269,6 +269,7 @@ void loop() {
     }
     else if (respSize == 0) {
       ECUconnected = false;
+      break;
     }
     delay(ISORequestDelay);
 
@@ -284,12 +285,12 @@ void loop() {
   }
 
   // Housekeeping
+  disable_interrupts();
   digitalWrite(BOARD_LED, LOW);
   digitalWrite(SERIAL_ON, LOW);
   strip.clear();
   strip.show();
 
-  disable_interrupts();
   delay(5000);
 }
 
@@ -319,6 +320,7 @@ bool initPulse() {
   uint8_t req[2];
   uint8_t resp[3];
 
+  disable_interrupts();
   Serial.end();
   
   // This is the ISO 14230-2 "Fast Init" sequence.
@@ -371,6 +373,8 @@ uint8_t sendRequest(const uint8_t *request, uint8_t *response, uint8_t reqLen, u
   bool forMe = false;
   char radioBuf[32];
   uint32_t startTime;
+
+  disable_interrupts();
   
   for (uint8_t i = 0; i < 16; i++) {
     buf[i] = 0;
@@ -403,22 +407,20 @@ uint8_t sendRequest(const uint8_t *request, uint8_t *response, uint8_t reqLen, u
   }
   
   // Now send the command...
-  disable_interrupts();
   serial_rx_off();
   for (uint8_t i = 0; i < bytesToSend; i++) {
     bytesSent += Serial.write(buf[i]);
     delay(ISORequestByteDelay);
   }
   serial_rx_on();
-  enable_interrupts();
   
   // Wait required time for response.
+  enable_interrupts();
   delay(ISORequestDelay);
-
+  disable_interrupts();
   startTime = millis();
   
   // Wait for and deal with the reply
-  disable_interrupts();
   while ((bytesRcvd <= maxLen) && ((millis() - startTime) < MAXSENDTIME)) {
     if (Serial.available()) {
       c = Serial.read();
