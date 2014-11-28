@@ -1,5 +1,11 @@
 /*
-KDS Reader - for reading data from the Kawasaki Diagnostic System (KDS) Port
+KAWADUINO
+
+Reads data from a Kawasaki ECU Diagnostic Port, and updates an LED string based on RPMs
+read from the ECU. This code is adapted from code originally written by Greebo on page 2
+of the following thread:
+
+http://ecuhacking.activeboard.com/t56234221/kds-protocol/
 
 KDS Packet format is:
 
@@ -88,36 +94,30 @@ Time (ms)	Sequence
 #define K_IN 0 // K Input Line - RX on Arduino
 #define SERIAL_ON 3
 
-#define MAXSENDTIME 2000 // 2 second timeout on KDS comms.
-
 // Animation settings
 #define MAX_RPM 6000
 #define REFRESH_MICROS 30000
-#define MIN_COL 100
+#define MIN_COL 160
 #define MAX_COL 255
-#define MIN_BRIGHT 30
+#define MIN_BRIGHT 20
 #define MAX_BRIGHT 255
 
 // LED settings
 #define N_PIXELS 60
 #define LED_PIN 6
-#define DIAG_LED2 5
 #define DIAG_LED1 4
+#define DIAG_LED2 5
 #define BOARD_LED 13
 
-// Misc
+// Startup
 #define AVG_CYCLES 50
 
+// Timings
+#define MAXSENDTIME 2000 // 2 second timeout on KDS comms.
 const uint32_t ISORequestByteDelay = 10;
 const uint32_t ISORequestDelay = 40; // Time between requests.
 
-const bool debugKDS = true;
-const bool debugPkt = true;
-const bool reqAllReg = false;
-
-// Connect rolePin to Ground for slave unit (connected to KDS port).
-const uint8_t rolePin = 8;
-
+// Addresses
 const uint8_t ECUaddr = 0x11;
 const uint8_t myAddr = 0xF2;
 
@@ -135,12 +135,10 @@ Adafruit_NeoPixel
 
 
 bool ECUconnected = false;
-volatile uint32_t rpms = 0;
-volatile uint32_t dampedRpms = 0;
+uint32_t rpms = 0;
+uint32_t dampedRpms = 0;
 
 void setup() {
-  char rBuf[32] = "";
-
   // Setup pins
   pinMode(K_OUT, OUTPUT);
   pinMode(K_IN, INPUT);
@@ -161,6 +159,7 @@ void setup() {
 
   startupLeds();
   
+  // Determine duration of updateLeds()
   determineAverage();
   
   strip.clear();
@@ -180,7 +179,6 @@ void loop() {
   delay(200);
   digitalWrite(BOARD_LED, LOW);
         
-  char strBuf[21];
   uint8_t cmdSize;
   uint8_t cmdBuf[6];
   uint8_t respSize;
@@ -221,12 +219,14 @@ void loop() {
     cmdBuf[1] = 0x09;
     respSize = sendRequest(cmdBuf, respBuf, cmdSize, 12);
     if (respSize == 4) {
-      //              "                    "
-      sprintf(strBuf, "RPM's: %4d [%02hhX|%02hhX]", respBuf[2] * 100 + respBuf[3], respBuf[2], respBuf[3]);
+      // Formula for RPMs from response
       rpms = respBuf[2] * 100 + respBuf[3];
+      
+      // Conform RPMs
       rpms = max(min(rpms, MAX_RPM), 0);
 
 #ifdef DIAG_LED1
+      // Diagnostic blink to show update rate
       if (diag1On) {
         digitalWrite(DIAG_LED1, HIGH);
       }
@@ -266,6 +266,7 @@ boolean diag2On = false;
 void determineAverage() {
   unsigned long start = micros();
   ECUconnected = true;
+  
   for (int i = 0; i < AVG_CYCLES; i++) {
     // Use a new RPM each time to make sure the function
     // is working as hard as possible
@@ -342,7 +343,7 @@ void updateLeds() {
   strip.setBrightness(map(dampedRpms, 0, MAX_RPM, MIN_BRIGHT, MAX_BRIGHT));
   
   // Grab color for RPM
-  uint32_t col = Wheel(map(dampedRpms, 0, MAX_RPM, MIN_COL, MAX_COL));
+  uint32_t col = wheel(map(dampedRpms, 0, MAX_RPM, MIN_COL, MAX_COL));
 
   // Display
   strip.clear();
@@ -364,7 +365,7 @@ void startupLeds() {
   
   // Show
   for (uint8_t i = 0; i < N_PIXELS; i++) {
-    strip.setPixelColor(i, Wheel(i * 255 / N_PIXELS));
+    strip.setPixelColor(i, wheel(i * 255 / N_PIXELS));
     strip.show();
     delay(1000 / N_PIXELS);
   }
@@ -580,9 +581,7 @@ uint8_t calcChecksum(uint8_t *data, uint8_t len) {
 
 // Input a value 0 to 255 to get a color value.
 // The colors are a transition r - g - b - back to r.
-uint32_t Wheel(byte WheelPos) {
-//  WheelPos = 255 - WheelPos;
-  
+uint32_t wheel(byte WheelPos) {
 	if(WheelPos < 85) {
 		return strip.Color(255 - WheelPos * 3, 0, WheelPos * 3);
 	} else if(WheelPos < 170) {
