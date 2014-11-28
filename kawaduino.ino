@@ -93,7 +93,7 @@ Time (ms)	Sequence
 // Animation settings
 #define MAX_RPM 6000
 #define REFRESH_MICROS 30000
-#define MIN_COL 60
+#define MIN_COL 100
 #define MAX_COL 255
 #define MIN_BRIGHT 30
 #define MAX_BRIGHT 255
@@ -265,6 +265,7 @@ boolean diag2On = false;
 // updateLeds() - called at startup
 void determineAverage() {
   unsigned long start = micros();
+  ECUconnected = true;
   for (int i = 0; i < AVG_CYCLES; i++) {
     // Use a new RPM each time to make sure the function
     // is working as hard as possible
@@ -276,6 +277,7 @@ void determineAverage() {
   
   rpms = 0;
   dampedRpms = 0;
+  ECUconnected = false;
 }
 
 
@@ -311,6 +313,10 @@ void delayLeds(unsigned long ms) {
 
 // Show the next frame on the LEDs
 void updateLeds() {
+  if (!ECUconnected) {
+    return;
+  }
+  
 #ifdef DIAG_LED2
   // Diagnostic blink
   if (diag2On) {
@@ -354,6 +360,7 @@ void updateLeds() {
 // Run startup routine on LEDs (purely cosmetic!)
 void startupLeds() {
   strip.clear();
+  strip.setBrightness(255);
   
   // Show
   for (uint8_t i = 0; i < N_PIXELS; i++) {
