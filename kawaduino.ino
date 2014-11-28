@@ -93,7 +93,7 @@ Time (ms)	Sequence
 
 // Animation settings
 #define MAX_RPM 10000
-#define REFRESH_MICROS 10000
+#define REFRESH_MICROS 30000
 
 // LED settings
 #define N_PIXELS 60
@@ -103,7 +103,7 @@ Time (ms)	Sequence
 #define BOARD_LED 13
 
 const uint32_t ISORequestByteDelay = 10;
-const uint32_t ISORequestDelay = 35; // Time between requests.
+const uint32_t ISORequestDelay = 40; // Time between requests.
 
 const bool debugKDS = true;
 const bool debugPkt = true;
@@ -156,8 +156,13 @@ void setup() {
   strip.clear();
   strip.show();
   
+  determineAverage();
+  
+  strip.clear();
+  strip.show();
+  
   // Init timer
-  Timer1.initialize(REFRESH_MICROS);
+  //Timer1.initialize(REFRESH_MICROS);
 }
 
 void loop() {
@@ -277,6 +282,8 @@ void loop() {
     //  sprintf(strBuf, "SPEED:  %3d [%02hhX|%02hhX]", ((respBuf[2] << 8) + respBuf[3]) / 2, respBuf[2], respBuf[3]);
     //}
     //delay(ISORequestDelay);
+    
+    updateLeds();
   }
 
   // Housekeeping
@@ -289,28 +296,31 @@ void loop() {
   delay(5000);
 }
 
+unsigned long avg = 0;
+boolean greenOn = false;
 
-void delayLeds(uint8_t ms) {
+void determineAverage() {
+  rpms = MAX_RPM;
+  dampedRpms = MAX_RPM;
+  unsigned long start = micros();
+  for (int i = 0; i < 50; i++) {
+    updateLeds();
+  }
+  avg = (micros() - start) / 50;
+  rpms = 0;
+  dampedRpms = 0;
+}
+
+void delayLeds(unsigned long ms) {
   unsigned long last = micros();
   unsigned long lastUpdate = 0;
-  unsigned long first = micros();
-  unsigned long avg = 0;
-  
-  boolean greenOn = false;
+  unsigned long first = last;
 
   while ((last - first) < ms * 1000) {
     unsigned long curr = micros();
     
-    if (curr - lastUpdate > REFRESH_MICROS && ((last - first) + avg < ms * 1000) {
-      //updateLeds();
-      if (greenOn) {
-        digitalWrite(GREEN_LED, HIGH);
-      }
-      else {
-        digitalWrite(GREEN_LED, LOW);
-      }
-      
-      greenOn = !greenOn;
+    if (curr - lastUpdate > REFRESH_MICROS && ((curr - first) + avg*4 < ms * 1000)) {
+      updateLeds();
       
       last = micros();
       lastUpdate = last;
@@ -319,11 +329,22 @@ void delayLeds(uint8_t ms) {
       } else {
         avg = (avg * 7 + (last - curr)) >> 3;
       }
+    } else {
+      last = curr;
     }
   }
 }
 
 void updateLeds() {
+  if (greenOn) {
+    digitalWrite(GREEN_LED, HIGH);
+  }
+  else {
+    digitalWrite(GREEN_LED, LOW);
+  }
+  
+  greenOn = !greenOn;
+  
   // Uncomment for test RPMs
   //rpms += 100;
   //if (rpms > MAX_RPM) {
@@ -339,6 +360,10 @@ void updateLeds() {
   for (uint8_t k = 0; k < leds; k++) {
     strip.setPixelColor(k, Wheel(k * 255 / N_PIXELS));
   }
+  
+  // Random pixel for visual refresh representation
+  //strip.setPixelColor(random(N_PIXELS), 255, 255, 255);
+  
   strip.show();
 }
 
@@ -401,8 +426,6 @@ uint8_t sendRequest(const uint8_t *request, uint8_t *response, uint8_t reqLen, u
   bool forMe = false;
   char radioBuf[32];
   uint32_t startTime;
-
-  disable_interrupts();
   
   for (uint8_t i = 0; i < 16; i++) {
     buf[i] = 0;
@@ -438,7 +461,7 @@ uint8_t sendRequest(const uint8_t *request, uint8_t *response, uint8_t reqLen, u
   serial_rx_off();
   for (uint8_t i = 0; i < bytesToSend; i++) {
     bytesSent += Serial.write(buf[i]);
-    delayLeds(ISORequestByteDelay);
+    delay(ISORequestByteDelay);
   }
   serial_rx_on();
   
