@@ -90,18 +90,29 @@ Time (ms)	Sequence
 
 #include <Adafruit_NeoPixel.h>
 #include <EEPROM.h>
+#include "kawaduino.h"
 
 #define K_OUT 1 // K Output Line - TX on Arduino
 #define K_IN 0 // K Input Line - RX on Arduino
 #define SERIAL_ON 3
 
 // Animation settings
-#define MAX_RPM 6000
 #define REFRESH_MICROS 30000
+// Mode 1
+#define MAX_RPM 6000
 #define MIN_COL 160
 #define MAX_COL 255
 #define MIN_BRIGHT 20
 #define MAX_BRIGHT 255
+// Mode 2
+#define MAX_MPH2 160
+#define MPH_DOTS 5
+#define MIN_MPH2 4
+#define BACKGROUND_MAX 0.3
+#define BACKGROUND_INCREASE 0.0001
+#define BACKGROUND_DECREASE 0.001
+#define BACKGROUND_COLOR 70
+#define PROGRESS_MPH2_MULT 1
 
 // LED settings
 #define N_PIXELS 60
@@ -141,8 +152,17 @@ Adafruit_NeoPixel
 
 
 bool ECUconnected = false;
+
+// Animation variables
+unsigned long lastFrameTime = 0;
+// Mode 1
 uint32_t rpms = 0;
 uint32_t dampedRpms = 0;
+// Mode 2
+uint32_t mph2 = 0;
+uint32_t dampedMph2 = 0;
+float backgroundLevel = 0;
+float progress = 0;
 
 // Modes
 uint8_t mode = 0;
@@ -171,6 +191,8 @@ void setup() {
   
   // Read mode
   mode = EEPROM.read(MODE_ADDR);
+  
+  lastFrameTime = micros();
   
   // Determine duration of updateLeds()
   determineAverage();
@@ -212,7 +234,28 @@ void loop() {
   // Endless loop.
   boolean diag1On = true;
   while (ECUconnected) {
-    doButton();
+#ifdef BTN_PIN
+    // Check the button
+    if (digitalRead(BTN_PIN) == HIGH) {
+      if (!btnPressed) {
+        // This is the first time we're seeing the press
+        btnPressed = true;
+        
+        // Increment the mode
+        mode++;
+        if (mode > N_MODES) {
+          mode = 1;
+        }
+        
+        // Save it
+        EEPROM.write(MODE_ADDR, mode);
+        
+        // Calculate the average again
+        determineAverage();
+      }
+    } else {
+    }
+#endif
     
     // Send register requests
     cmdSize = 2; // each request is a 2 byte packet.
@@ -228,33 +271,52 @@ void loop() {
     // 0x?? - error code (0x10 = General Reject: The service is rejected
     //      but the server does not specify the reason of the rejection
 
-    for (uint8_t i = 0; i < 5; i++) respBuf[i] = 0;
-    // Request RPM is register: 0x09
-    cmdBuf[1] = 0x09;
-    respSize = sendRequest(cmdBuf, respBuf, cmdSize, 12);
-    if (respSize == 4) {
-      // Formula for RPMs from response
-      rpms = respBuf[2] * 100 + respBuf[3];
+    // Grab RPMs
+    if (mode == 1) {
+      for (uint8_t i = 0; i < 5; i++) respBuf[i] = 0;
       
-      // Conform RPMs
-      rpms = max(min(rpms, MAX_RPM), 0);
+      // Request RPM is register: 0x09
+      cmdBuf[1] = 0x09;
+      respSize = sendRequest(cmdBuf, respBuf, cmdSize, 12);
+      if (respSize == 4) {
+        // Formula for RPMs from response
+        rpms = respBuf[2] * 100 + respBuf[3];
+        
+        // Conform RPMs
+        rpms = max(min(rpms, MAX_RPM), 0);
+  
+  #ifdef DIAG_LED1
+        // Diagnostic blink to show update rate
+        if (diag1On) {
+          digitalWrite(DIAG_LED1, HIGH);
+        }
+        else {
+          digitalWrite(DIAG_LED1, LOW);
+        }
+        diag1On = !diag1On;
+  #endif
+      }
+      else if (respSize == 0) {
+        ECUconnected = false;
+        break;
+      }
+      delayLeds(ISORequestDelay);
+    }
+    
+    // Gram Speed
+    if (mode == 2) {
+      for (uint8_t i = 0; i < 5; i++) respBuf[i] = 0;
 
-#ifdef DIAG_LED1
-      // Diagnostic blink to show update rate
-      if (diag1On) {
-        digitalWrite(DIAG_LED1, HIGH);
+      // Request Speed is register: 0x0C
+      cmdBuf[1] = 0x0C;
+      respSize = sendRequest(cmdBuf, respBuf, cmdSize, 12);
+      if (respSize == 4) {
+        // NOTE: Actual MPH is this value halved, but we want to
+        // keep full available resolution
+        mph2 = (respBuf[2] << 8) + respBuf[3];
       }
-      else {
-        digitalWrite(DIAG_LED1, LOW);
-      }
-      diag1On = !diag1On;
-#endif
+      delayLeds(ISORequestDelay);
     }
-    else if (respSize == 0) {
-      ECUconnected = false;
-      break;
-    }
-    delayLeds(ISORequestDelay);
 
   }
 
@@ -278,53 +340,28 @@ boolean diag2On = false;
 // One-time function to measure average runtime of
 // updateLeds() - called at startup
 void determineAverage() {
+  unsigned long start = micros();
   boolean oldECUconnected = ECUconnected;
   uint32_t oldRpms = rpms;
+  uint32_t oldMph2 = mph2;
   ECUconnected = true;
-  unsigned long start = micros();
   
   for (int i = 0; i < AVG_CYCLES; i++) {
-    // Use a new RPM each time to make sure the function
+    // Update these values each time to make sure the function
     // is working as hard as possible
     rpms = map(i, 0, AVG_CYCLES, 0, MAX_RPM);
     dampedRpms = rpms;
+    mph2 = map(i, 0, AVG_CYCLES, 0, MAX_MPH2);
+    dampedMph2 = mph2;
     updateLeds();
   }
   avg = (micros() - start) / AVG_CYCLES;
   
   rpms = oldRpms;
   dampedRpms = oldRpms;
+  mph2 = oldMph2;
+  dampedMph2 = oldMph2;
   ECUconnected = oldECUconnected;
-}
-
-
-boolean doButton() {
-#ifdef BTN_PIN
-  // Check the button
-  if (digitalRead(BTN_PIN) == HIGH) {
-    if (!btnPressed) {
-      // This is the first time we're seeing the press
-      btnPressed = true;
-      
-      // Increment the mode
-      mode++;
-      if (mode > N_MODES) {
-        mode = 1;
-      }
-      
-      // Save it
-      EEPROM.write(MODE_ADDR, mode);
-      
-      // Calculate the average again
-      determineAverage();
-      
-      return true;
-    }
-  } else {
-    btnPressed = false;
-  }
-#endif
-  return false;
 }
 
 
@@ -342,17 +379,14 @@ void delayLeds(unsigned long ms) {
     // Note that this conservatively will NOT run updateLeds if it doesn't look
     // like there will be enough time to complete
     if (curr - lastUpdate > REFRESH_MICROS && ((curr - first) + avg*4 < ms * 1000)) {
-      boolean changed = doButton();
       updateLeds();
       
       last = micros();
       lastUpdate = last;
-      if (!changed) {
-        if (avg == 0) {
-          avg = last - curr;
-        } else {
-          avg = (avg * 15 + (last - curr)) >> 4;
-        }
+      if (avg == 0) {
+        avg = last - curr;
+      } else {
+        avg = (avg * 15 + (last - curr)) >> 4;
       }
     } else {
       last = curr;
@@ -363,6 +397,10 @@ void delayLeds(unsigned long ms) {
 
 // Show the next frame on the LEDs
 void updateLeds() {
+  unsigned long currTime = micros();
+  unsigned long frameTime = currTime - lastFrameTime;
+  lastFrameTime = currTime;
+  
   if (!ECUconnected) {
     return;
   }
@@ -381,17 +419,17 @@ void updateLeds() {
 
   switch(mode) {
     case 1:
-      doMode1();
+      doMode1(frameTime);
       break;
     case 2:
-      doMode2();
+      doMode2(frameTime);
       break;
   }
 }
 
 
 // Show frame for mode 1
-void doMode1() {
+void doMode1(unsigned long frameTime) {
   // Uncomment for test RPMs
   //rpms += 100;
   //if (rpms > MAX_RPM) {
@@ -405,12 +443,12 @@ void doMode1() {
   strip.setBrightness(map(dampedRpms, 0, MAX_RPM, MIN_BRIGHT, MAX_BRIGHT));
   
   // Grab color for RPM
-  uint32_t col = wheel(map(dampedRpms, 0, MAX_RPM, MIN_COL, MAX_COL));
+  Color col = wheel(map(dampedRpms, 0, MAX_RPM, MIN_COL, MAX_COL));
 
   // Display
   strip.clear();
   for (uint8_t k = 0; k < N_PIXELS; k++) {
-    strip.setPixelColor(k, col);
+    strip.setPixelColor(k, col.r, col.g, col.b);
   }
   
   // Random pixel for visual refresh representation
@@ -420,9 +458,54 @@ void doMode1() {
 }
 
 // Show frame for mode 2
-void doMode2() {
+void doMode2(unsigned long frameTime) {
   strip.clear();
-  strip.setPixelColor(random(N_PIXELS), 255, 255, 255);
+  
+  // Update mph
+  dampedMph2 = (dampedMph2 * 7 + mph2) >> 3;
+
+  // Update the background
+  if (mph2 > MIN_MPH2) {
+    backgroundLevel -= BACKGROUND_DECREASE;
+  } else {
+    backgroundLevel += BACKGROUND_INCREASE;
+  }
+  backgroundLevel = max(0, min(backgroundLevel, BACKGROUND_MAX));
+
+  // Show background
+  if (backgroundLevel > 0) {
+    Color bgBase = wheel(BACKGROUND_COLOR);
+    uint32_t bg = Color((float)bgBase.r * backgroundLevel, (float)bgBase.g * backgroundLevel, (float)bgBase.b * backgroundLevel).toUint32();
+    
+    for (int i = 0; i < N_PIXELS; i++) {
+      strip.setPixelColor(i, bg);
+    }
+  }
+  
+  // Increase progress
+  progress += mph2 * (float)PROGRESS_MPH2_MULT * (float)frameTime / 1000000;
+  while (progress > N_PIXELS) {
+    progress -= N_PIXELS;
+  }
+  
+  // Show mph points
+  // Get the color for the dots
+  Color col = wheel(map(dampedMph2, 0, MAX_MPH2, MIN_COL, MAX_COL));
+  for (int p = 0; p < MPH_DOTS; p++) {
+    // Get the dot position
+    float pos = progress + (float)N_PIXELS * (float)p / (float)MPH_DOTS;
+    if (pos > N_PIXELS) {
+      pos -= N_PIXELS;
+    }
+    
+    // Draw it smoothly
+    for (int i = max((int)pos - 2, 0); i < min((int)pos + 2, N_PIXELS - 1); i++) {
+      float intensity = 1.0 - min(abs((float)i - pos) / 1.5, 1.0);
+      uint32_t posColor = Color((int)((float)col.r * intensity), (int)((float)col.g * intensity), (int)((float)col.b * intensity)).toUint32();
+      strip.setPixelColor(i, posColor);
+    }
+  }
+  
   strip.show();
 }
 
@@ -434,7 +517,7 @@ void startupLeds() {
   
   // Show
   for (uint8_t i = 0; i < N_PIXELS; i++) {
-    strip.setPixelColor(i, wheel(i * 255 / N_PIXELS));
+    strip.setPixelColor(i, wheel(i * 255 / N_PIXELS).toUint32());
     strip.show();
     delay(1000 / N_PIXELS);
   }
@@ -650,15 +733,15 @@ uint8_t calcChecksum(uint8_t *data, uint8_t len) {
 
 // Input a value 0 to 255 to get a color value.
 // The colors are a transition r - g - b - back to r.
-uint32_t wheel(byte WheelPos) {
-	if(WheelPos < 85) {
-		return strip.Color(255 - WheelPos * 3, 0, WheelPos * 3);
-	} else if(WheelPos < 170) {
-		WheelPos -= 85;
-		return strip.Color(0, WheelPos * 3, 255 - WheelPos * 3);
-	} else {
-		WheelPos -= 170;
-		return strip.Color(WheelPos * 3, 255 - WheelPos * 3, 0);
-	}
+Color wheel(byte wheelPos) {
+  if(wheelPos < 85) {
+    return Color(255 - wheelPos * 3, 0, wheelPos * 3);
+  } else if(wheelPos < 170) {
+    wheelPos -= 85;
+    return Color(0, wheelPos * 3, 255 - wheelPos * 3);
+  } else {
+    wheelPos -= 170;
+    return Color(wheelPos * 3, 255 - wheelPos * 3, 0);
+  }
 }
 
