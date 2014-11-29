@@ -106,13 +106,15 @@ Time (ms)	Sequence
 #define MAX_BRIGHT 255
 // Mode 2
 #define MAX_MPH2 160
-#define MPH_DOTS 5
+#define MPH_DOTS 3
+#define MPH_DOT_SIZE 3
 #define MIN_MPH2 4
-#define BACKGROUND_MAX 0.3
-#define BACKGROUND_INCREASE 0.0001
-#define BACKGROUND_DECREASE 0.001
-#define BACKGROUND_COLOR 70
+#define BACKGROUND_MAX 0.4
+#define BACKGROUND_INCREASE 0.1
+#define BACKGROUND_DECREASE 0.7
+#define BACKGROUND_COLOR 180
 #define PROGRESS_MPH2_MULT 1
+#define DAMPED_MPH2_FACTOR 10
 
 // LED settings
 #define N_PIXELS 60
@@ -160,7 +162,7 @@ uint32_t rpms = 0;
 uint32_t dampedRpms = 0;
 // Mode 2
 uint32_t mph2 = 0;
-uint32_t dampedMph2 = 0;
+float dampedMph2 = 0;
 float backgroundLevel = 0;
 float progress = 0;
 
@@ -234,28 +236,7 @@ void loop() {
   // Endless loop.
   boolean diag1On = true;
   while (ECUconnected) {
-#ifdef BTN_PIN
-    // Check the button
-    if (digitalRead(BTN_PIN) == HIGH) {
-      if (!btnPressed) {
-        // This is the first time we're seeing the press
-        btnPressed = true;
-        
-        // Increment the mode
-        mode++;
-        if (mode > N_MODES) {
-          mode = 1;
-        }
-        
-        // Save it
-        EEPROM.write(MODE_ADDR, mode);
-        
-        // Calculate the average again
-        determineAverage();
-      }
-    } else {
-    }
-#endif
+    doButton();
     
     // Send register requests
     cmdSize = 2; // each request is a 2 byte packet.
@@ -300,7 +281,7 @@ void loop() {
         ECUconnected = false;
         break;
       }
-      delayLeds(ISORequestDelay);
+      delayLeds(ISORequestDelay, true);
     }
     
     // Gram Speed
@@ -314,8 +295,23 @@ void loop() {
         // NOTE: Actual MPH is this value halved, but we want to
         // keep full available resolution
         mph2 = (respBuf[2] << 8) + respBuf[3];
+
+  #ifdef DIAG_LED1
+        // Diagnostic blink to show update rate
+        if (diag1On) {
+          digitalWrite(DIAG_LED1, HIGH);
+        }
+        else {
+          digitalWrite(DIAG_LED1, LOW);
+        }
+        diag1On = !diag1On;
+  #endif
       }
-      delayLeds(ISORequestDelay);
+      else if (respSize == 0) {
+        ECUconnected = false;
+        break;
+      }
+      delayLeds(ISORequestDelay, true);
     }
 
   }
@@ -340,11 +336,11 @@ boolean diag2On = false;
 // One-time function to measure average runtime of
 // updateLeds() - called at startup
 void determineAverage() {
-  unsigned long start = micros();
   boolean oldECUconnected = ECUconnected;
   uint32_t oldRpms = rpms;
   uint32_t oldMph2 = mph2;
   ECUconnected = true;
+  unsigned long start = micros();
   
   for (int i = 0; i < AVG_CYCLES; i++) {
     // Update these values each time to make sure the function
@@ -365,8 +361,40 @@ void determineAverage() {
 }
 
 
+boolean doButton() {
+#ifdef BTN_PIN
+  // Check the button
+  if (digitalRead(BTN_PIN) == HIGH) {
+    if (!btnPressed) {
+      // This is the first time we're seeing the press
+      btnPressed = true;
+      
+      // Increment the mode
+      mode++;
+      if (mode > N_MODES) {
+        mode = 1;
+      }
+      
+      // Save it
+      EEPROM.write(MODE_ADDR, mode);
+      
+      // Calculate the average again
+      determineAverage();
+      
+      // Reset
+      resetLeds();
+      
+      return true;
+    }
+  } else {
+    btnPressed = false;
+  }
+#endif
+  return false;
+}
+
 // Custom delay routine that updates LEDs while idle
-void delayLeds(unsigned long ms) {
+void delayLeds(unsigned long ms, boolean safe) {
   unsigned long last = micros();
   unsigned long lastUpdate = 0;
   unsigned long first = last;
@@ -378,20 +406,34 @@ void delayLeds(unsigned long ms) {
     // Refresh the lights if we go over a given interval, and we'll have time
     // Note that this conservatively will NOT run updateLeds if it doesn't look
     // like there will be enough time to complete
+    boolean changed = false;
     if (curr - lastUpdate > REFRESH_MICROS && ((curr - first) + avg*4 < ms * 1000)) {
+      if (!safe) {
+        changed = doButton();
+      }
       updateLeds();
       
       last = micros();
       lastUpdate = last;
-      if (avg == 0) {
-        avg = last - curr;
-      } else {
-        avg = (avg * 15 + (last - curr)) >> 4;
+      if (!changed) {
+        if (avg == 0) {
+          avg = last - curr;
+        } else {
+          avg = (avg * 15 + (last - curr)) >> 4;
+        }
       }
     } else {
       last = curr;
     }
   }
+}
+
+
+void resetLeds() {
+  strip.clear();
+  strip.setBrightness(255);
+  strip.show();
+  backgroundLevel = 0;
 }
 
 
@@ -460,15 +502,17 @@ void doMode1(unsigned long frameTime) {
 // Show frame for mode 2
 void doMode2(unsigned long frameTime) {
   strip.clear();
+  strip.setBrightness(255);
+  float frameSecs = (float)frameTime / 1000000;
   
   // Update mph
-  dampedMph2 = (dampedMph2 * 7 + mph2) >> 3;
+  dampedMph2 = (dampedMph2 * DAMPED_MPH2_FACTOR + mph2) / (DAMPED_MPH2_FACTOR + 1);
 
   // Update the background
   if (mph2 > MIN_MPH2) {
-    backgroundLevel -= BACKGROUND_DECREASE;
+    backgroundLevel -= (float)BACKGROUND_DECREASE * frameSecs;
   } else {
-    backgroundLevel += BACKGROUND_INCREASE;
+    backgroundLevel += (float)BACKGROUND_INCREASE * frameSecs;
   }
   backgroundLevel = max(0, min(backgroundLevel, BACKGROUND_MAX));
 
@@ -483,26 +527,30 @@ void doMode2(unsigned long frameTime) {
   }
   
   // Increase progress
-  progress += mph2 * (float)PROGRESS_MPH2_MULT * (float)frameTime / 1000000;
-  while (progress > N_PIXELS) {
+  progress += dampedMph2 * (float)PROGRESS_MPH2_MULT * frameSecs;
+  while (progress > N_PIXELS - 1) {
     progress -= N_PIXELS;
   }
   
   // Show mph points
-  // Get the color for the dots
-  Color col = wheel(map(dampedMph2, 0, MAX_MPH2, MIN_COL, MAX_COL));
-  for (int p = 0; p < MPH_DOTS; p++) {
-    // Get the dot position
-    float pos = progress + (float)N_PIXELS * (float)p / (float)MPH_DOTS;
-    if (pos > N_PIXELS) {
-      pos -= N_PIXELS;
-    }
-    
-    // Draw it smoothly
-    for (int i = max((int)pos - 2, 0); i < min((int)pos + 2, N_PIXELS - 1); i++) {
-      float intensity = 1.0 - min(abs((float)i - pos) / 1.5, 1.0);
-      uint32_t posColor = Color((int)((float)col.r * intensity), (int)((float)col.g * intensity), (int)((float)col.b * intensity)).toUint32();
-      strip.setPixelColor(i, posColor);
+  if (dampedMph2 > MIN_MPH2) {
+    // Get the color for the dots
+    uint32_t col = wheel(map(dampedMph2, 0, MAX_MPH2, MIN_COL, MAX_COL)).toUint32();
+    for (int p = 0; p < MPH_DOTS; p++) {
+      // Get the dot position
+      int pos = (int)progress + N_PIXELS * p / MPH_DOTS;
+      if (pos > N_PIXELS - 1) {
+        pos -= N_PIXELS;
+      }
+
+      for (int i = 0; i < MPH_DOT_SIZE; i++) {
+        int n = pos + i;
+        if (n > N_PIXELS - 1) {
+          n -= N_PIXELS;
+        }
+        
+        strip.setPixelColor(n, col);
+      }
     }
   }
   
@@ -632,7 +680,7 @@ uint8_t sendRequest(const uint8_t *request, uint8_t *response, uint8_t reqLen, u
   }
   
   // Wait required time for response.
-  delayLeds(ISORequestDelay);
+  delayLeds(ISORequestDelay, false);
   
   startTime = millis();
   
@@ -642,7 +690,7 @@ uint8_t sendRequest(const uint8_t *request, uint8_t *response, uint8_t reqLen, u
       c = Serial.read();
       startTime = millis(); // reset the timer on each byte received
 
-      delayLeds(ISORequestByteDelay);
+      delayLeds(ISORequestByteDelay, true);
 
       rbuf[rCnt] = c;
       switch (rCnt) {
@@ -701,7 +749,7 @@ uint8_t sendRequest(const uint8_t *request, uint8_t *response, uint8_t reqLen, u
           bytesRcvd = 0;
           
           // ISO 14230 specifies a delay between ECU responses.
-          delayLeds(ISORequestDelay);
+          delayLeds(ISORequestDelay, true);
         } else {
           // must be data, so put it in the response buffer
           // rCnt must be >= 4 to be here.
