@@ -99,10 +99,11 @@ Time (ms)	Sequence
 // Animation settings
 #define REFRESH_MICROS 30000
 // Mode 1
-#define MAX_RPM 6000
-#define MIN_COL 160
+#define MAX_RPM 7000
+#define MIN_RPM 1200
+#define MIN_COL 180
 #define MAX_COL 255
-#define MIN_BRIGHT 20
+#define MIN_BRIGHT 25
 #define MAX_BRIGHT 255
 // Mode 2
 #define MAX_MPH2 160
@@ -264,7 +265,7 @@ void loop() {
         rpms = respBuf[2] * 100 + respBuf[3];
         
         // Conform RPMs
-        rpms = max(min(rpms, MAX_RPM), 0);
+        rpms = max(min(rpms, MAX_RPM), MIN_RPM);
   
   #ifdef DIAG_LED1
         // Diagnostic blink to show update rate
@@ -345,7 +346,7 @@ void determineAverage() {
   for (int i = 0; i < AVG_CYCLES; i++) {
     // Update these values each time to make sure the function
     // is working as hard as possible
-    rpms = map(i, 0, AVG_CYCLES, 0, MAX_RPM);
+    rpms = map(i, 0, AVG_CYCLES, MIN_RPM, MAX_RPM);
     dampedRpms = rpms;
     mph2 = map(i, 0, AVG_CYCLES, 0, MAX_MPH2);
     dampedMph2 = mph2;
@@ -482,10 +483,10 @@ void doMode1(unsigned long frameTime) {
   dampedRpms = (dampedRpms * 7 + rpms) >> 3;
   
   // Set brightness
-  strip.setBrightness(map(dampedRpms, 0, MAX_RPM, MIN_BRIGHT, MAX_BRIGHT));
+  strip.setBrightness(map(dampedRpms, MIN_RPM, MAX_RPM, MIN_BRIGHT, MAX_BRIGHT));
   
   // Grab color for RPM
-  Color col = wheel(map(dampedRpms, 0, MAX_RPM, MIN_COL, MAX_COL));
+  Color col = wheel(map(dampedRpms, MIN_RPM, MAX_RPM, MIN_COL, MAX_COL));
 
   // Display
   strip.clear();
