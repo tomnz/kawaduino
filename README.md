@@ -2,6 +2,8 @@
 
 This is an Arduino project that uses an external IC to query the onboard ECU of a Kawasaki motorcycle. Various data can be read back from the bike, including RPM, speed, throttle position, and sensor data.
 
+You can see a video of an early prototype here: https://www.youtube.com/watch?v=ie-Pfxzt-yQ
+
 ### Application
 
 This particular script is designed to power a string of AdaFruit NeoPixel LEDs like [these ones](http://www.adafruit.com/products/1461). In its current state, the script has two modes - one that is based on RPM (animates color), and one based on speed (animates moving dots).
